@@ -85,7 +85,7 @@ func (h *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 
 		http.Redirect(w, r, toURL, http.StatusMovedPermanently)
 	} else {
-		h.logger.Warn(fmt.Sprintf("No certificate found for %s", r.Host))
+		h.logger.Debug(fmt.Sprintf("No certificate found for %s", r.Host))
 		return next.ServeHTTP(w, r)
 	}
 
