@@ -2,6 +2,7 @@ package httpredirect
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 
 	"github.com/caddyserver/caddy/v2"
@@ -34,16 +35,12 @@ func (Middleware) CaddyModule() caddy.ModuleInfo {
 func (h *Middleware) Provision(ctx caddy.Context) error {
 	h.logger = ctx.Logger(h)
 
-	tlsAppIface, err := ctx.App("tls")
+	tlsAppIface, err := ctx.AppIfConfigured("tls")
 	if err != nil {
 		return fmt.Errorf("getting tls app: %v", err)
 	}
 
 	h.tlsApp = tlsAppIface.(*caddytls.TLS)
-
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -58,14 +55,35 @@ func (h *Middleware) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
+func hostOnly(hostport string) string {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return hostport // OK; probably had no port to begin with
+	}
+	return host
+}
+
 func (h *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	exists := h.tlsApp.HasCertificateForSubject(r.Host)
+	requestHost := hostOnly(r.Host)
+	exists := len(caddytls.AllMatchingCertificates(requestHost)) > 0
 
 	h.logger.Debug(fmt.Sprintf("Checking certificate for %s: %t", r.Host, exists))
 
-	if exists == true {
+	if exists {
 		h.logger.Debug(fmt.Sprintf("Certificate found for %s", r.Host))
-		http.Redirect(w, r, fmt.Sprintf("https://%s%s", r.Host, r.RequestURI), http.StatusMovedPermanently)
+
+		toURL := "https://"
+
+		// since we redirect to the standard HTTPS port, we
+		// do not need to include it in the redirect URL
+
+		toURL += requestHost
+		toURL += r.URL.RequestURI()
+
+		// get rid of this disgusting unencrypted HTTP connection 🤢
+		w.Header().Set("Connection", "close")
+
+		http.Redirect(w, r, toURL, http.StatusMovedPermanently)
 	} else {
 		h.logger.Warn(fmt.Sprintf("No certificate found for %s", r.Host))
 		return next.ServeHTTP(w, r)
